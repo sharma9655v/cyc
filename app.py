@@ -1,158 +1,128 @@
 import streamlit as st
 import joblib
 import numpy as np
-import pandas as pd
 import requests
 import os
-import random
-import io
-from geopy.distance import geodesic
+from twilio.rest import Client
 import folium
 from streamlit_folium import st_folium
 
 # ==============================================================================
-# MODULE 1: CONFIGURATION & TWO VOICE ASSETS
+# 🔑 CONFIGURATION
 # ==============================================================================
-CONFIG = {
-    "APP_TITLE": "Vizag Cyclone Command Center",
-    "API_KEY": "22223eb27d4a61523a6bbad9f42a14a7",
-    "MODEL_PATH": "cyclone_model.joblib",
-    "TARGET_CITY": "Visakhapatnam",
-    "DEFAULT_COORDS": (17.6868, 83.2185) 
-}
+WEATHER_API_KEY = "22223eb27d4a61523a6bbad9f42a14a7"
 
-# Focusing only on your two specific provided audio files
-VOICE_MAP = {
-    "📢 Regional Broadcast (English)": "alert_detailed.mp3",
-    "🇮🇳 Emergency Alert (Telugu)": "alert_telugu_final.mp3"
-}
+# Account 1 Credentials
+TWILIO_SID_1 = "ACc9b9941c778de30e2ed7ba57f87cdfbc" 
+TWILIO_AUTH_1 = "3cb1dfcb6a9a3cae88f4eff47e9458df"
+TWILIO_PHONE_1 = "+15075195618"
 
-st.set_page_config(page_title=CONFIG["APP_TITLE"], page_icon="🌪️", layout="wide")
+# Account 2 Credentials (Backup)
+TWILIO_SID_2 = "ACa12e602647785572ebaf765659d26d23"
+TWILIO_AUTH_2 = "26210979738809eaf59a678e98fe2c0f"
+TWILIO_PHONE_2 = "+14176076960"
 
-st.markdown("""
-<style>
-    .stApp { background-color: #0e1117; }
-    .glass-card {
-        background: rgba(30, 33, 48, 0.8);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        padding: 20px;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
-    .emergency-banner {
-        background: linear-gradient(90deg, #4a151b 0%, #2b0d10 100%);
-        border-left: 5px solid #ff4b4b;
-        color: #ff8080;
-        padding: 15px;
-        border-radius: 8px;
-        margin-bottom: 20px;
-    }
-</style>
-""", unsafe_allow_html=True)
+# --- PUBLIC MP3 LINKS (Twilio must be able to reach these online) ---
+# Replace these with the actual public URLs you generated for your files
+URL_ENGLISH_MP3 = "https://drive.google.com/file/d/18nSmhQKoV-Epc-e2qX9kvJyZkZaFB_X1/view?usp=drive_link"
+URL_TELUGU_MP3 = "https://drive.google.com/file/d/1KKMmH10hPuqEc3-X8uAa7BLqlz5TzMdn/view?usp=drive_link"
+
+MODEL_FILE = "cyclone_model.joblib"
+
+st.set_page_config(page_title="Vizag SOS Dual-Link", page_icon="🌪️", layout="wide")
 
 # ==============================================================================
-# MODULE 2: VOICE UTILITY
+# 🆘 SOS FUNCTION (DUAL ACCOUNT FAILOVER)
 # ==============================================================================
-def play_voice_file(file_name, autoplay=False):
-    """Opens and plays only the two specified files."""
-    if os.path.exists(file_name):
-        with open(file_name, "rb") as f:
-            audio_bytes = f.read()
-            st.audio(audio_bytes, format="audio/mp3", autoplay=autoplay)
-    else:
-        st.error(f"❌ File {file_name} missing. Please ensure it is in your project folder.")
-
-# ==============================================================================
-# MODULE 3: RECOVERY ENGINE & WEATHER
-# ==============================================================================
-class PhysicsFallbackModel:
-    def predict(self, X):
-        pressure = X[0][2]
-        if pressure < 960: return np.array([3])
-        if pressure < 990: return np.array([2])
-        if pressure < 1005: return np.array([1])
-        return np.array([0])
-
-@st.cache_resource
-def load_cyclone_engine():
-    if not os.path.exists(CONFIG["MODEL_PATH"]):
-        return PhysicsFallbackModel(), True
-    try:
-        model = joblib.load(CONFIG["MODEL_PATH"])
-        return model, False
-    except Exception:
-        return PhysicsFallbackModel(), True
-
-model_engine, is_fallback = load_cyclone_engine()
-
-class CycloneUtils:
-    @staticmethod
-    def get_weather(city):
+def trigger_sos_dual(target_phone, language="English"):
+    # List of accounts to try in order
+    accounts = [
+        {"sid": TWILIO_SID_1, "token": TWILIO_AUTH_1, "from": TWILIO_PHONE_1},
+        {"sid": TWILIO_SID_2, "token": TWILIO_AUTH_2, "from": TWILIO_PHONE_2}
+    ]
+    
+    audio_url = URL_TELUGU_MP3 if language == "Telugu" else URL_ENGLISH_MP3
+    twiml_content = f'<Response><Play>{audio_url}</Play></Response>'
+    
+    last_error = ""
+    for idx, acc in enumerate(accounts):
         try:
-            url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={CONFIG['API_KEY']}"
-            r = requests.get(url, timeout=5).json()
-            return r['coord']['lat'], r['coord']['lon'], r['main']['pressure'], r['name']
-        except:
-            return *CONFIG["DEFAULT_COORDS"], 1012, "Default (Simulated)"
-
-utils = CycloneUtils()
+            client = Client(acc["sid"], acc["token"])
+            client.calls.create(
+                twiml=twiml_content,
+                to=target_phone,
+                from_=acc["from"]
+            )
+            return f"SUCCESS (Account {idx+1})" # Stop if the first account works
+        except Exception as e:
+            last_error = str(e)
+            continue # Try the next account if this one fails
+            
+    return f"FAILED BOTH ACCOUNTS: {last_error}"
 
 # ==============================================================================
-# MODULE 4: MAIN DASHBOARD
+# 🌪️ WEATHER & PREDICTION LOGIC
 # ==============================================================================
-st.title(f"🌪️ {CONFIG['APP_TITLE']}")
+@st.cache_resource
+def load_model():
+    if os.path.exists(MODEL_FILE):
+        return joblib.load(MODEL_FILE)
+    return None
 
-# Logic Calculations
-lat, lon, pres, loc_name = utils.get_weather(CONFIG["TARGET_CITY"])
-risk_level = int(model_engine.predict([[lat, lon, pres]])[0])
+model = load_model()
+
+def get_live_weather():
+    url = f"https://api.openweathermap.org/data/2.5/weather?q=Visakhapatnam&appid={WEATHER_API_KEY}"
+    try:
+        res = requests.get(url).json()
+        return res["coord"]["lat"], res["coord"]["lon"], res["main"]["pressure"]
+    except:
+        return 17.68, 83.21, 1012 
+
+lat, lon, pres = get_live_weather()
+prediction_idx = 0
+if model:
+    prediction_idx = int(model.predict(np.array([[lat, lon, pres]]))[0])
+
+# ==============================================================================
+# 📊 DASHBOARD UI
+# ==============================================================================
+st.title("🌪️ Vizag Cyclone Command Center (Dual SOS)")
 
 with st.sidebar:
-    st.header("🎙️ Voice Dispatch Center")
-    selected_voice_label = st.selectbox("Select Language Alert", list(VOICE_MAP.keys()))
-    
-    if st.button("🔊 Play Selected Alert"):
-        play_voice_file(VOICE_MAP[selected_voice_label])
+    st.header("🚨 Emergency Contacts")
+    c1 = st.text_input("Primary Contact", "+917678495189")
+    c2 = st.text_input("Family Contact", "+918130631551")
     
     st.divider()
-    st.header("🌐 Regional Settings")
-    city_query = st.text_input("Target City", CONFIG["TARGET_CITY"])
+    st.subheader("Broadcast Audio")
+    call_lang = st.radio("Select MP3 Language", ["English", "Telugu"])
+    
+    if st.button("🚨 TRIGGER DUAL-ACCOUNT SOS", type="primary", use_container_width=True):
+        for t in [c1, c2]:
+            if len(t) > 10:
+                with st.spinner(f"Initiating call to {t}..."):
+                    result = trigger_sos_dual(t, call_lang)
+                    if "SUCCESS" in result:
+                        st.success(f"✅ {t}: {result}")
+                    else:
+                        st.error(f"❌ {t}: {result}")
 
-tab_live, tab_sim, tab_ops = st.tabs(["📡 Live Data Monitor", "🧪 Storm Simulation", "🚨 Emergency Ops"])
+# Main Dashboard
+col1, col2 = st.columns([1, 2])
+with col1:
+    st.metric("Live Pressure", f"{pres} hPa")
+    status = ["🟢 SAFE", "🟡 DEPRESSION", "🟠 STORM", "🔴 CYCLONE"][prediction_idx]
+    st.subheader(f"Status: {status}")
+    
+    st.divider()
+    st.write("🔊 **Local MP3 Preview**")
+    if os.path.exists("alert_detailed.mp3"):
+        st.audio("alert_detailed.mp3")
+    if os.path.exists("alert_telugu_final.mp3"):
+        st.audio("alert_telugu_final.mp3")
 
-# --- LIVE MONITOR ---
-with tab_live:
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.markdown(f'<div class="glass-card"><h3>Live Pressure</h3><h1>{pres} hPa</h1></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="glass-card"><h3>Region</h3><h1>{loc_name}</h1></div>', unsafe_allow_html=True)
-        
-        if risk_level >= 2:
-            st.error("🚨 HIGH CYCLONE RISK")
-            play_voice_file(VOICE_MAP["📢 Regional Broadcast (English)"], autoplay=True)
-
-    with c2:
-        m = folium.Map(location=[lat, lon], zoom_start=11)
-        folium.TileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr='Esri', name='Satellite').add_to(m)
-        folium.CircleMarker([lat, lon], radius=15, color="red" if risk_level >= 2 else "cyan", fill=True).add_to(m)
-        st_folium(m, height=500, use_container_width=True)
-
-# --- SIMULATION ---
-with tab_sim:
-    sc1, sc2 = st.columns([1, 2])
-    with sc1:
-        s_pres = st.slider("Simulate Low Pressure (hPa)", 880, 1030, 970)
-        s_risk = int(model_engine.predict([[lat, lon, s_pres]])[0])
-        st.metric("Predicted Severity", f"Level {s_risk}")
-        
-    with sc2:
-        st.write("Storm Intensity Forecast Graph")
-        st.progress(min(s_risk/3, 1.0))
-
-# --- EMERGENCY OPS ---
-with tab_ops:
-    if risk_level >= 2 or s_risk >= 3:
-        play_voice_file(VOICE_MAP["🇮🇳 Emergency Alert (Telugu)"], autoplay=True)
-        st.markdown('<div class="emergency-banner">🚨 EMERGENCY ALERT: Activating Local Response.</div>', unsafe_allow_html=True)
-    else:
-        st.info("Emergency protocols are currently on standby.")
+with col2:
+    m = folium.Map(location=[lat, lon], zoom_start=11)
+    folium.Circle([lat, lon], radius=15000, color='red', fill=True, popup="Risk Zone").add_to(m)
+    st_folium(m, height=450, use_container_width=True)
