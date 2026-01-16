@@ -22,18 +22,18 @@ CONFIG = {
     "DEFAULT_COORDS": (17.6868, 83.2185) 
 }
 
-# Mapping your uploaded ContentFetchIDs to specific roles
+# Use actual filenames. Ensure these files are in the same folder as app.py
 VOICE_MAP = {
-    "📢 Regional Broadcast": "uploaded:alert_broadcast.mp3",
-    "🇮🇳 Telugu Emergency": "uploaded:alert_telugu.mp3",
-    "🚩 Final Telugu Warning": "uploaded:alert_telugu_final.mp3",
-    "🇬🇧 English Detailed": "uploaded:alert_detailed.mp3",
-    "⚠️ Standard Alert": "uploaded:alert.mp3"
+    "📢 Regional Broadcast": "alert_broadcast.mp3",
+    "🇮🇳 Telugu Emergency": "alert_telugu.mp3",
+    "🚩 Final Telugu Warning": "alert_telugu_final.mp3",
+    "🇬🇧 English Detailed": "alert_detailed.mp3",
+    "⚠️ Standard Alert": "alert.mp3"
 }
 
 st.set_page_config(page_title=CONFIG["APP_TITLE"], page_icon="🌪️", layout="wide")
 
-# (Styling remains the same as your provided code)
+# (Custom CSS styling remains unchanged)
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
@@ -45,11 +45,31 @@ st.markdown("""
         text-align: center;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
+    .emergency-banner {
+        background: linear-gradient(90deg, #4a151b 0%, #2b0d10 100%);
+        border-left: 5px solid #ff4b4b;
+        color: #ff8080;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# MODULE 2: RECOVERY ENGINE
+# MODULE 2: VOICE UTILITY (The Fix)
+# ==============================================================================
+def play_voice_file(file_name, autoplay=False):
+    """Safely opens and plays an MP3 file to avoid MediaFileStorageError."""
+    if os.path.exists(file_name):
+        with open(file_name, "rb") as f:
+            audio_bytes = f.read()
+            st.audio(audio_bytes, format="audio/mp3", autoplay=autoplay)
+    else:
+        st.error(f"❌ Audio file missing: {file_name}. Please ensure it is uploaded to your project folder.")
+
+# ==============================================================================
+# MODULE 3: RECOVERY ENGINE & WEATHER
 # ==============================================================================
 class PhysicsFallbackModel:
     def predict(self, X):
@@ -71,9 +91,6 @@ def load_cyclone_engine():
 
 model_engine, is_fallback = load_cyclone_engine()
 
-# ==============================================================================
-# MODULE 3: DATA & UTILITIES
-# ==============================================================================
 class CycloneUtils:
     @staticmethod
     @st.cache_data(ttl=3600)
@@ -103,16 +120,16 @@ shelter_db = utils.get_shelters()
 # ==============================================================================
 st.title(f"🌪️ {CONFIG['APP_TITLE']}")
 
+# Logic Calculations
+lat, lon, pres, loc_name = utils.get_weather(CONFIG["TARGET_CITY"])
+risk_level = int(model_engine.predict([[lat, lon, pres]])[0])
+
 with st.sidebar:
     st.header("🎙️ Voice Dispatch Console")
-    st.caption("Select a high-quality voice note to play:")
-    
-    # Dropdown to select your uploaded voice notes
     selected_voice_label = st.selectbox("Choose Audio Note", list(VOICE_MAP.keys()))
     
     if st.button("🔊 Play Selected Dispatch"):
-        # This plays the file directly from your uploaded ContentFetchID
-        st.audio(VOICE_MAP[selected_voice_label], format="audio/mp3")
+        play_voice_file(VOICE_MAP[selected_voice_label])
     
     st.divider()
     st.header("🌐 Regional Settings")
@@ -120,21 +137,16 @@ with st.sidebar:
 
 tab_live, tab_sim, tab_ops = st.tabs(["📡 Live Data", "🧪 Simulation", "🚨 Emergency Ops"])
 
-# LOGIC CALCULATIONS
-lat, lon, pres, loc_name = utils.get_weather(city_query)
-risk_level = int(model_engine.predict([[lat, lon, pres]])[0])
-
 # --- LIVE MONITOR ---
 with tab_live:
     c1, c2 = st.columns([1, 2])
     with c1:
         st.markdown(f'<div class="glass-card"><h3>Live Pressure</h3><h1>{pres} hPa</h1></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="glass-card"><h3>Risk Level</h3><h1>{["SAFE", "DEPRESSION", "STORM", "CYCLONE"][risk_level]}</h1></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="glass-card"><h3>Status</h3><h1>{["SAFE", "DEPRESSION", "STORM", "CYCLONE"][risk_level]}</h1></div>', unsafe_allow_html=True)
         
-        # Automatic trigger: If status is STORM or CYCLONE, play the Broadcast note
         if risk_level >= 2:
             st.error("🚨 CRITICAL RISK DETECTED")
-            st.audio(VOICE_MAP["📢 Regional Broadcast"], format="audio/mp3")
+            play_voice_file(VOICE_MAP["📢 Regional Broadcast"], autoplay=True)
 
     with c2:
         m = folium.Map(location=[lat, lon], zoom_start=11)
@@ -150,9 +162,8 @@ with tab_sim:
         s_risk = int(model_engine.predict([[lat, lon, s_pres]])[0])
         st.metric("Predicted Severity", f"Level {s_risk}")
         
-        # Play the Final Telugu Warning if extreme pressure is simulated
         if s_risk == 3:
-            st.audio(VOICE_MAP["🚩 Final Telugu Warning"], format="audio/mp3")
+            play_voice_file(VOICE_MAP["🚩 Final Telugu Warning"], autoplay=True)
             
     with sc2:
         st.progress(min(s_risk/3, 1.0))
@@ -160,13 +171,12 @@ with tab_sim:
 # --- EMERGENCY OPS ---
 with tab_ops:
     if risk_level >= 2:
-        st.audio(VOICE_MAP["🇮🇳 Telugu Emergency"], format="audio/mp3")
-        st.markdown('<div class="emergency-banner">🚨 EMERGENCY: High Risk. Deploying Shelter Network.</div>', unsafe_allow_html=True)
+        play_voice_file(VOICE_MAP["🇮🇳 Telugu Emergency"], autoplay=True)
+        st.markdown('<div class="emergency-banner">🚨 EMERGENCY: Deploying Shelter Network.</div>', unsafe_allow_html=True)
     
-    # (Shelter routing map remains the same)
+    m_ops = folium.Map(location=[lat, lon], zoom_start=12)
     user_pos = (lat, lon)
     closest = sorted(shelter_db.items(), key=lambda x: geodesic(user_pos, x[1]).km)[:30]
-    m_ops = folium.Map(location=[lat, lon], zoom_start=12)
     for name, coords in closest:
         folium.CircleMarker(coords, radius=4, color="#39ff14", fill=True, tooltip=name).add_to(m_ops)
     st_folium(m_ops, height=500, use_container_width=True)
