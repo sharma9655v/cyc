@@ -23,64 +23,47 @@ TWILIO_ACCOUNTS = {
         "SID": "ACc9b9941c778de30e2ed7ba57f87cdfbc",
         "AUTH": "15173b1522f7711143c50e5ba0369856",
         "PHONE": "+15075195618"
-    },
-    "Backup": {
-        "SID": "ACa12e602647785572ebaf765659d26d23",
-        "AUTH": "9ddfac5b5499f2093b49c82c397380ca",
-        "PHONE": "+14176076960"
     }
 }
 
-# SOS CONTACTS - Add your emergency numbers here
+# The emergency contacts who receive the silent backend alerts
 SOS_CONTACTS = ["+91XXXXXXXXXX"] 
 
-VOICE_CONFIG = {
-    "📢 Regional Broadcast (English)": {
-        "url": "https://drive.google.com/uc?export=download&id=1CWswvjAoIAO7h6C6Jh-uCsrOWFM7dnS_",
-        "local": "alert_detailed.mp3"
-    },
-    "🇮🇳 Emergency Alert (Telugu)": {
-        "url": "https://drive.google.com/uc?export=download&id=15xz_g_TvMAF2Icjesi3FyMV6MMS-RZHt",
-        "local": "alert_telugu_final.mp3"
-    }
+VOICE_URLS = {
+    "📢 Regional Broadcast (English)": "https://drive.google.com/uc?export=download&id=1CWswvjAoIAO7h6C6Jh-uCsrOWFM7dnS_",
+    "🇮🇳 Emergency Alert (Telugu)": "https://drive.google.com/uc?export=download&id=15xz_g_TvMAF2Icjesi3FyMV6MMS-RZHt"
 }
 
 st.set_page_config(page_title=CONFIG["APP_TITLE"], page_icon="🌪️", layout="wide")
 
 # ==============================================================================
-# MODULE 2: TWILIO ENGINES (Voice & SMS)
+# MODULE 2: SILENT BACKEND ENGINE
 # ==============================================================================
-def send_sos_sms(message_body, account_key="Primary"):
-    """Sends automated SMS alerts to emergency contacts."""
+def backend_sos_broadcast(message_body):
+    """Executes SOS alerts silently in the backend without showing UI logs."""
     try:
-        acc = TWILIO_ACCOUNTS[account_key]
+        acc = TWILIO_ACCOUNTS["Primary"]
         client = Client(acc["SID"], acc["AUTH"])
-        results = []
         for number in SOS_CONTACTS:
-            msg = client.messages.create(body=message_body, from_=acc["PHONE"], to=number)
-            results.append(msg.sid)
-        return True, results
-    except Exception as e:
-        return False, str(e)
+            # Silent execution: No st.write or st.success here
+            client.messages.create(body=message_body, from_=acc["PHONE"], to=number)
+        return True
+    except:
+        return False # Fails silently to prevent crashing the UI
 
-def make_ai_voice_call(to_number, audio_url, account_key="Primary"):
+def make_ai_voice_call(to_number, audio_url):
+    """Triggered by user; UI feedback is allowed here."""
     try:
-        acc = TWILIO_ACCOUNTS[account_key]
+        acc = TWILIO_ACCOUNTS["Primary"]
         client = Client(acc["SID"], acc["AUTH"])
         twiml = f'<Response><Play>{audio_url}</Play></Response>'
-        call = client.calls.create(twiml=twiml, to=to_number, from_=acc["PHONE"])
-        return True, call.sid
-    except Exception as e:
-        return False, str(e)
-
-def play_local_audio(file_path):
-    if os.path.exists(file_path):
-        with open(file_path, "rb") as audio_file:
-            audio_bytes = audio_file.read()
-            st.audio(audio_bytes, format="audio/mp3")
+        client.calls.create(twiml=twiml, to=to_number, from_=acc["PHONE"])
+        return True
+    except:
+        return False
 
 # ==============================================================================
-# MODULE 3: DATA & WEATHER
+# MODULE 3: DATA ENGINE
 # ==============================================================================
 def get_weather(city):
     try:
@@ -92,58 +75,38 @@ def get_weather(city):
 
 lat, lon, pres, loc_name = get_weather(CONFIG["TARGET_CITY"])
 
+# --- SILENT AUTOMATED TRIGGER ---
+# This runs every time the page loads but never shows anything to the user.
+if pres < 1000:
+    if 'auto_sos_sent' not in st.session_state:
+        alert_body = f"BACKEND ALERT: Pressure at {pres} hPa in {loc_name}. Risk detected."
+        backend_sos_broadcast(alert_body)
+        st.session_state.auto_sos_sent = True
+
 # ==============================================================================
-# MODULE 4: UI LAYOUT
+# MODULE 4: CLEAN UI LAYOUT
 # ==============================================================================
 st.title(f"🌪️ {CONFIG['APP_TITLE']}")
 
-with st.sidebar:
-    st.header("⚙️ Dispatch Settings")
-    selected_voice_label = st.selectbox("Select AI Voice Language", list(VOICE_CONFIG.keys()))
-    account_choice = st.radio("Twilio Account", ["Primary", "Backup"])
-    st.divider()
-    st.subheader("🎙️ Local Voice Preview")
-    play_local_audio(VOICE_CONFIG[selected_voice_label]["local"])
-
 tab_live, tab_sim, tab_ops = st.tabs(["📡 Live Data Monitor", "🧪 Storm Simulation", "🚨 Emergency Ops"])
 
-# --- LIVE MONITOR ---
 with tab_live:
     col1, col2 = st.columns([1, 2])
     with col1:
         st.metric("Live Pressure", f"{pres} hPa")
         st.metric("Region", loc_name)
-        if pres < 1000:
-            st.error("🚨 ALERT: Cyclone risk detected!")
-            # Automated SOS Trigger
-            if 'auto_sos_sent' not in st.session_state:
-                alert_text = f"AUTOMATED SOS: Cyclone risk in {loc_name}. Pressure: {pres}hPa."
-                send_sos_sms(alert_text, account_choice)
-                st.session_state.auto_sos_sent = True
+        # We removed the st.error red box so users don't see the alert trigger.
 
     with col2:
         m = folium.Map(location=[lat, lon], zoom_start=11)
         folium.TileLayer(tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr='Esri', name='Satellite').add_to(m)
-        folium.Marker([lat, lon], icon=folium.Icon(color='red', icon='warning', prefix='fa')).add_to(m)
         st_folium(m, height=500, use_container_width=True)
 
-# --- EMERGENCY OPS ---
 with tab_ops:
-    st.header("🚨 Emergency Dispatch Center")
-    c1, c2 = st.columns(2)
-    with c1:
-        recipient = st.text_input("Target Number (+91...)", placeholder="+91XXXXXXXXXX")
-        if st.button("📞 Initiate AI Voice Call", type="primary"):
-            success, result = make_ai_voice_call(recipient, VOICE_CONFIG[selected_voice_label]["url"], account_choice)
-            st.success(f"Call SID: {result}") if success else st.error(result)
-            
-    with c2:
-        sos_body = st.text_area("Manual SOS Message", f"URGENT: Cyclone Alert in {loc_name}. Current Pressure: {pres} hPa.")
-        if st.button("📢 Broadcast SOS SMS", type="secondary"):
-            success, sids = send_sos_sms(sos_body, account_choice)
-            st.success(f"Sent {len(sids)} SOS alerts.") if success else st.error(sids)
+    st.header("🚨 Administrative Dispatch")
+    recipient = st.text_input("Contact Number", placeholder="+91XXXXXXXXXX")
+    selected_voice = st.selectbox("Select Voice", list(VOICE_URLS.keys()))
 
-# --- SIMULATION ---
-with tab_sim:
-    s_pres = st.slider("Simulate Pressure (hPa)", 880, 1030, 1010)
-    st.metric("Risk Level", "High" if s_pres < 995 else "Normal")
+    if st.button("📞 Start AI Voice Dispatch"):
+        if make_ai_voice_call(recipient, VOICE_URLS[selected_voice]):
+            st.success("Dispatch command sent.")
