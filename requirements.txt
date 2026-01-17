@@ -1,10 +1,10 @@
 streamlit
+joblib
 numpy
 pandas
-joblib
 requests
-twilio
+geopy
 folium
 streamlit-folium
-geopy
-gtts
+twilio
+scikit-learn
