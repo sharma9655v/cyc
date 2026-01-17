@@ -8,16 +8,16 @@ from streamlit_folium import st_folium
 from twilio.rest import Client
 
 # ==============================================================================
-# MODULE 1: CONFIGURATION & CREDENTIALS
+# 1. CONFIGURATION & EMERGENCY CONTACTS
 # ==============================================================================
 CONFIG = {
     "APP_TITLE": "Vizag Cyclone Command Center",
     "API_KEY": "22223eb27d4a61523a6bbad9f42a14a7",
-    "MODEL_PATH": "cyclone_model.joblib",
     "TARGET_CITY": "Visakhapatnam",
     "DEFAULT_COORDS": [17.6868, 83.2185] 
 }
 
+# Twilio Credentials
 TWILIO_ACCOUNTS = {
     "Primary": {
         "SID": "ACc9b9941c778de30e2ed7ba57f87cdfbc",
@@ -26,29 +26,47 @@ TWILIO_ACCOUNTS = {
     }
 }
 
-EMERGENCY_CONTACTS = ["+91XXXXXXXXXX", "+91YYYYYYYYYY"]
+# --- ADDING TWO PHONE NUMBERS HERE ---
+# Ensure numbers use E.164 format: + [Country Code] [Number]
+EMERGENCY_CONTACTS = [
+    "+91XXXXXXXXXX",  # Primary Contact (e.g., Command Head)
+    "+91YYYYYYYYYY"   # Secondary Contact (e.g., Field Supervisor)
+]
 
 VOICE_URLS = {
     "📢 Regional Broadcast (English)": "https://drive.google.com/uc?export=download&id=1CWswvjAoIAO7h6C6Jh-uCsrOWFM7dnS_",
     "🇮🇳 Emergency Alert (Telugu)": "https://drive.google.com/uc?export=download&id=15xz_g_TvMAF2Icjesi3FyMV6MMS-RZHt"
 }
+VOICE_FILES = {
+    "📢 Regional Broadcast (English)": "alert_detailed.mp3",
+    "🇮🇳 Emergency Alert (Telugu)": "alert_telugu_final.mp3"
+}
 
 st.set_page_config(page_title=CONFIG["APP_TITLE"], page_icon="🌪️", layout="wide")
 
 # ==============================================================================
-# MODULE 2: BACKEND ENGINES
+# 2. BACKEND BROADCAST ENGINE
 # ==============================================================================
-def silent_backend_sos(message_body):
+def broadcast_sos_to_all(message_body):
+    """Loops through the contact list and sends SMS to everyone."""
     try:
         acc = TWILIO_ACCOUNTS["Primary"]
         client = Client(acc["SID"], acc["AUTH"])
-        for number in EMERGENCY_CONTACTS:
-            client.messages.create(body=message_body, from_=acc["PHONE"], to=number)
+        
+        # This loop ensures both numbers receive the message
+        for contact_number in EMERGENCY_CONTACTS:
+            client.messages.create(
+                body=message_body,
+                from_=acc["PHONE"],
+                to=contact_number
+            )
         return True
-    except:
+    except Exception as e:
+        print(f"Backend Broadcast Error: {e}")
         return False
 
 def make_ai_voice_call(to_number, audio_url):
+    """Triggers a voice call to a specific recipient."""
     try:
         acc = TWILIO_ACCOUNTS["Primary"]
         client = Client(acc["SID"], acc["AUTH"])
@@ -59,100 +77,84 @@ def make_ai_voice_call(to_number, audio_url):
         return False
 
 # ==============================================================================
-# MODULE 3: UPDATED 5-LEVEL RISK ENGINE
+# 3. LEVEL 5 RISK ENGINE
 # ==============================================================================
-class PhysicsFallbackModel:
-    def predict(self, X):
-        pressure = X[0][2]
-        if pressure < 920: return np.array([5]) # Super Cyclone
-        if pressure < 940: return np.array([4]) # Extremely Severe
-        if pressure < 960: return np.array([3]) # Very Severe
-        if pressure < 980: return np.array([2]) # Severe Cyclone
-        if pressure < 1000: return np.array([1]) # Cyclonic Storm
-        return np.array([0]) # Normal
+class CycloneLevelModel:
+    def predict(self, pressure):
+        if pressure < 920: return 5  # Super Cyclone
+        if pressure < 945: return 4  # Extremely Severe
+        if pressure < 965: return 3  # Very Severe
+        if pressure < 985: return 2  # Severe
+        if pressure < 1005: return 1 # Cyclonic Storm
+        return 0
 
-@st.cache_resource
-def load_cyclone_engine():
-    if not os.path.exists(CONFIG["MODEL_PATH"]):
-        return PhysicsFallbackModel(), True
+risk_engine = CycloneLevelModel()
+
+def fetch_weather():
     try:
-        model = joblib.load(CONFIG["MODEL_PATH"])
-        return model, False
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={CONFIG['TARGET_CITY']}&appid={CONFIG['API_KEY']}"
+        data = requests.get(url, timeout=5).json()
+        return data['coord']['lat'], data['coord']['lon'], data['main']['pressure'], data['name']
     except:
-        return PhysicsFallbackModel(), True
+        return *CONFIG["DEFAULT_COORDS"], 1012, "Visakhapatnam (Offline)"
 
-model_engine, is_fallback = load_cyclone_engine()
+lat, lon, pres, loc_name = fetch_weather()
+current_level = risk_engine.predict(pres)
 
-def get_weather(city):
-    try:
-        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={CONFIG['API_KEY']}"
-        r = requests.get(url, timeout=5).json()
-        return r['coord']['lat'], r['coord']['lon'], r['main']['pressure'], r['name']
-    except:
-        return *CONFIG["DEFAULT_COORDS"], 1012, "Default (Simulated)"
-
-# Logic Calculations
-lat, lon, pres, loc_name = get_weather(CONFIG["TARGET_CITY"])
-risk_level = int(model_engine.predict([[lat, lon, pres]])[0])
-
-# SILENT SOS TRIGGER (Levels 3, 4, and 5)
-if risk_level >= 3:
-    if 'auto_sos_sent' not in st.session_state:
-        alert_body = f"CRITICAL: Level {risk_level} Cyclone Risk in {loc_name}. Pressure: {pres} hPa."
-        silent_backend_sos(alert_body)
-        st.session_state.auto_sos_sent = True
+# SILENT TRIGGER: Level 3+ triggers backend SOS to BOTH contacts
+if current_level >= 3:
+    if 'sos_sent' not in st.session_state:
+        sos_text = f"🚨 BACKEND SOS: Level {current_level} risk at {loc_name}. Pressure: {pres}hPa."
+        broadcast_sos_to_all(sos_text)
+        st.session_state.sos_sent = True
 
 # ==============================================================================
-# MODULE 4: UI LAYOUT
+# 4. USER INTERFACE
 # ==============================================================================
 st.title(f"🌪️ {CONFIG['APP_TITLE']}")
 
 with st.sidebar:
-    st.header("⚙️ Dispatch Settings")
-    selected_voice = st.selectbox("Select AI Voice Language", list(VOICE_URLS.keys()))
+    st.header("🛡️ Control Center")
+    selected_voice = st.selectbox("Select Alert Language", list(VOICE_URLS.keys()))
     
     st.divider()
-    st.subheader("📊 Severity Guide")
-    st.write("**L1:** Storm | **L2:** Severe")
-    st.write("**L3:** Very Severe | **L4:** Extreme")
-    st.error("**L5: Super Cyclone**")
+    st.subheader("🎙️ Voice Preview")
+    if os.path.exists(VOICE_FILES[selected_voice]):
+        with open(VOICE_FILES[selected_voice], "rb") as f:
+            st.audio(f.read(), format="audio/mp3")
 
-tab_live, tab_sim, tab_ops = st.tabs(["📡 Live Data Monitor", "🧪 Storm Simulation", "🚨 Emergency Ops"])
+tab_live, tab_sim, tab_ops = st.tabs(["📡 Live Monitor", "🧪 Simulation", "🚨 Emergency Ops"])
 
-# --- LIVE MONITOR ---
 with tab_live:
     col1, col2 = st.columns([1, 2])
     with col1:
-        st.metric("Live Pressure", f"{pres} hPa")
-        st.metric("Risk Level", f"Level {risk_level}")
+        st.metric("Barometric Pressure", f"{pres} hPa")
+        st.metric("Intensity Level", f"Level {current_level}/5")
         
-        # UI Alerts based on Level 5 scale
-        if risk_level == 5:
-            st.warning("🚨 SUPER CYCLONE DETECTED (Level 5)")
-        elif risk_level >= 3:
-            st.error(f"⚠️ MAJOR RISK: LEVEL {risk_level}")
+        if current_level >= 3:
+            st.error(f"⚠️ MAJOR ALERT: High risk detected. Backend alerts sent to {len(EMERGENCY_CONTACTS)} contacts.")
 
     with col2:
         m = folium.Map(location=[lat, lon], zoom_start=11)
         folium.TileLayer(tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr='Esri', name='Satellite').add_to(m)
-        
-        # Color code markers by risk
-        marker_color = 'darkred' if risk_level >= 4 else 'red' if risk_level >= 2 else 'blue'
-        folium.Marker([lat, lon], icon=folium.Icon(color=marker_color, icon='warning', prefix='fa')).add_to(m)
-        
-        st_folium(m, height=500, use_container_width=True)
+        colors = ["blue", "green", "orange", "red", "darkred", "black"]
+        folium.Marker([lat, lon], icon=folium.Icon(color=colors[current_level], icon='warning')).add_to(m)
+        st_folium(m, height=450, use_container_width=True)
 
-# --- EMERGENCY OPS ---
 with tab_ops:
-    st.header("🚨 AI Voice Dispatch")
-    recipient = st.text_input("Target Number", placeholder="+91XXXXXXXXXX")
-    if st.button("📞 Start AI Voice Call", type="primary"):
-        make_ai_voice_call(recipient, VOICE_URLS[selected_voice])
-
-# --- SIMULATION (5-Level Testing) ---
-with tab_sim:
-    s_pres = st.slider("Simulate Extreme Pressure (hPa)", 880, 1030, 950)
-    s_risk = int(model_engine.predict([[lat, lon, s_pres]])[0])
+    st.header("🚨 Administrative Commands")
+    st.info(f"The SOS Broadcast will notify: {', '.join(EMERGENCY_CONTACTS)}")
     
-    st.subheader(f"Simulated Status: Level {s_risk}")
-    st.progress(min(s_risk/5, 1.0)) # Scaled to Level 5
+    if st.button("📢 Manual Broadcast SOS to All Contacts", type="primary"):
+        manual_msg = f"MANUAL ALERT: Emergency protocol activated for {loc_name}. Current Pressure: {pres} hPa."
+        if broadcast_sos_to_all(manual_msg):
+            st.success("SOS Message sent successfully to all recipients.")
+        else:
+            st.error("Broadcast failed. Check terminal logs.")
+
+    st.divider()
+    st.subheader("📞 Specific Voice Dispatch")
+    target_num = st.text_input("Enter number for AI Call", placeholder="+91...")
+    if st.button("Start AI Voice Call"):
+        if target_num and make_ai_voice_call(target_num, VOICE_URLS[selected_voice]):
+            st.success(f"Voice call initiated to {target_num}")
