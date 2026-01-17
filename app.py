@@ -21,12 +21,12 @@ CONFIG = {
 TWILIO_ACCOUNTS = {
     "Primary": {
         "SID": "ACc9b9941c778de30e2ed7ba57f87cdfbc",
-        "AUTH": "3cb1dfcb6a9a3cae88f4eff47e9458df",
+        "AUTH": "b9664b1b9fec1c6ab71cb83d4dd8fede",
         "PHONE": "+15075195618"
     },
     "Backup": {
         "SID": "ACa12e602647785572ebaf765659d26d23",
-        "AUTH": "6460cb8dfe71e335741bb20bc14c452a",
+        "AUTH": "9ddfac5b5499f2093b49c82c397380ca",
         "PHONE": "+14176076960"
     }
 }
