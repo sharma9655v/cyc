@@ -1,78 +1,75 @@
 import streamlit as st
 import joblib
 import numpy as np
-import pandas as pd
-import requests
 import os
-import random
-import io
-from geopy.distance import geodesic
+import requests
 import folium
 from streamlit_folium import st_folium
+from twilio.rest import Client
 
 # ==============================================================================
-# MODULE 1: CONFIGURATION & TWO VOICE ASSETS
+# MODULE 1: CONFIGURATION & CREDENTIALS
 # ==============================================================================
 CONFIG = {
     "APP_TITLE": "Vizag Cyclone Command Center",
     "API_KEY": "22223eb27d4a61523a6bbad9f42a14a7",
     "MODEL_PATH": "cyclone_model.joblib",
     "TARGET_CITY": "Visakhapatnam",
-    "DEFAULT_COORDS": (17.6868, 83.2185) 
+    "DEFAULT_COORDS": [17.6868, 83.2185] 
 }
 
-# Focusing only on your two specific provided audio files
-VOICE_MAP = {
-    "📢 Regional Broadcast (English)": "alert_detailed.mp3",
-    "🇮🇳 Emergency Alert (Telugu)": "alert_telugu_final.mp3"
+TWILIO_ACCOUNTS = {
+    "Primary": {
+        "SID": "ACc9b9941c778de30e2ed7ba57f87cdfbc",
+        "AUTH": "15173b1522f7711143c50e5ba0369856",
+        "PHONE": "+15075195618"
+    }
+}
+
+EMERGENCY_CONTACTS = ["+91XXXXXXXXXX", "+91YYYYYYYYYY"]
+
+VOICE_URLS = {
+    "📢 Regional Broadcast (English)": "https://drive.google.com/uc?export=download&id=1CWswvjAoIAO7h6C6Jh-uCsrOWFM7dnS_",
+    "🇮🇳 Emergency Alert (Telugu)": "https://drive.google.com/uc?export=download&id=15xz_g_TvMAF2Icjesi3FyMV6MMS-RZHt"
 }
 
 st.set_page_config(page_title=CONFIG["APP_TITLE"], page_icon="🌪️", layout="wide")
 
-st.markdown("""
-<style>
-    .stApp { background-color: #0e1117; }
-    .glass-card {
-        background: rgba(30, 33, 48, 0.8);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        padding: 20px;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
-    .emergency-banner {
-        background: linear-gradient(90deg, #4a151b 0%, #2b0d10 100%);
-        border-left: 5px solid #ff4b4b;
-        color: #ff8080;
-        padding: 15px;
-        border-radius: 8px;
-        margin-bottom: 20px;
-    }
-</style>
-""", unsafe_allow_html=True)
+# ==============================================================================
+# MODULE 2: BACKEND ENGINES
+# ==============================================================================
+def silent_backend_sos(message_body):
+    try:
+        acc = TWILIO_ACCOUNTS["Primary"]
+        client = Client(acc["SID"], acc["AUTH"])
+        for number in EMERGENCY_CONTACTS:
+            client.messages.create(body=message_body, from_=acc["PHONE"], to=number)
+        return True
+    except:
+        return False
+
+def make_ai_voice_call(to_number, audio_url):
+    try:
+        acc = TWILIO_ACCOUNTS["Primary"]
+        client = Client(acc["SID"], acc["AUTH"])
+        twiml = f'<Response><Play>{audio_url}</Play></Response>'
+        client.calls.create(twiml=twiml, to=to_number, from_=acc["PHONE"])
+        return True
+    except:
+        return False
 
 # ==============================================================================
-# MODULE 2: VOICE UTILITY
-# ==============================================================================
-def play_voice_file(file_name, autoplay=False):
-    """Opens and plays only the two specified files."""
-    if os.path.exists(file_name):
-        with open(file_name, "rb") as f:
-            audio_bytes = f.read()
-            st.audio(audio_bytes, format="audio/mp3", autoplay=autoplay)
-    else:
-        st.error(f"❌ File {file_name} missing. Please ensure it is in your project folder.")
-
-# ==============================================================================
-# MODULE 3: RECOVERY ENGINE & WEATHER
+# MODULE 3: UPDATED 5-LEVEL RISK ENGINE
 # ==============================================================================
 class PhysicsFallbackModel:
     def predict(self, X):
         pressure = X[0][2]
-        if pressure < 960: return np.array([3])
-        if pressure < 990: return np.array([2])
-        if pressure < 1005: return np.array([1])
-        return np.array([0])
+        if pressure < 920: return np.array([5]) # Super Cyclone
+        if pressure < 940: return np.array([4]) # Extremely Severe
+        if pressure < 960: return np.array([3]) # Very Severe
+        if pressure < 980: return np.array([2]) # Severe Cyclone
+        if pressure < 1000: return np.array([1]) # Cyclonic Storm
+        return np.array([0]) # Normal
 
 @st.cache_resource
 def load_cyclone_engine():
@@ -81,78 +78,81 @@ def load_cyclone_engine():
     try:
         model = joblib.load(CONFIG["MODEL_PATH"])
         return model, False
-    except Exception:
+    except:
         return PhysicsFallbackModel(), True
 
 model_engine, is_fallback = load_cyclone_engine()
 
-class CycloneUtils:
-    @staticmethod
-    def get_weather(city):
-        try:
-            url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={CONFIG['API_KEY']}"
-            r = requests.get(url, timeout=5).json()
-            return r['coord']['lat'], r['coord']['lon'], r['main']['pressure'], r['name']
-        except:
-            return *CONFIG["DEFAULT_COORDS"], 1012, "Default (Simulated)"
+def get_weather(city):
+    try:
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={CONFIG['API_KEY']}"
+        r = requests.get(url, timeout=5).json()
+        return r['coord']['lat'], r['coord']['lon'], r['main']['pressure'], r['name']
+    except:
+        return *CONFIG["DEFAULT_COORDS"], 1012, "Default (Simulated)"
 
-utils = CycloneUtils()
+# Logic Calculations
+lat, lon, pres, loc_name = get_weather(CONFIG["TARGET_CITY"])
+risk_level = int(model_engine.predict([[lat, lon, pres]])[0])
+
+# SILENT SOS TRIGGER (Levels 3, 4, and 5)
+if risk_level >= 3:
+    if 'auto_sos_sent' not in st.session_state:
+        alert_body = f"CRITICAL: Level {risk_level} Cyclone Risk in {loc_name}. Pressure: {pres} hPa."
+        silent_backend_sos(alert_body)
+        st.session_state.auto_sos_sent = True
 
 # ==============================================================================
-# MODULE 4: MAIN DASHBOARD
+# MODULE 4: UI LAYOUT
 # ==============================================================================
 st.title(f"🌪️ {CONFIG['APP_TITLE']}")
 
-# Logic Calculations
-lat, lon, pres, loc_name = utils.get_weather(CONFIG["TARGET_CITY"])
-risk_level = int(model_engine.predict([[lat, lon, pres]])[0])
-
 with st.sidebar:
-    st.header("🎙️ Voice Dispatch Center")
-    selected_voice_label = st.selectbox("Select Language Alert", list(VOICE_MAP.keys()))
-    
-    if st.button("🔊 Play Selected Alert"):
-        play_voice_file(VOICE_MAP[selected_voice_label])
+    st.header("⚙️ Dispatch Settings")
+    selected_voice = st.selectbox("Select AI Voice Language", list(VOICE_URLS.keys()))
     
     st.divider()
-    st.header("🌐 Regional Settings")
-    city_query = st.text_input("Target City", CONFIG["TARGET_CITY"])
+    st.subheader("📊 Severity Guide")
+    st.write("**L1:** Storm | **L2:** Severe")
+    st.write("**L3:** Very Severe | **L4:** Extreme")
+    st.error("**L5: Super Cyclone**")
 
 tab_live, tab_sim, tab_ops = st.tabs(["📡 Live Data Monitor", "🧪 Storm Simulation", "🚨 Emergency Ops"])
 
 # --- LIVE MONITOR ---
 with tab_live:
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.markdown(f'<div class="glass-card"><h3>Live Pressure</h3><h1>{pres} hPa</h1></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="glass-card"><h3>Region</h3><h1>{loc_name}</h1></div>', unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.metric("Live Pressure", f"{pres} hPa")
+        st.metric("Risk Level", f"Level {risk_level}")
         
-        if risk_level >= 2:
-            st.error("🚨 HIGH CYCLONE RISK")
-            play_voice_file(VOICE_MAP["📢 Regional Broadcast (English)"], autoplay=True)
+        # UI Alerts based on Level 5 scale
+        if risk_level == 5:
+            st.warning("🚨 SUPER CYCLONE DETECTED (Level 5)")
+        elif risk_level >= 3:
+            st.error(f"⚠️ MAJOR RISK: LEVEL {risk_level}")
 
-    with c2:
+    with col2:
         m = folium.Map(location=[lat, lon], zoom_start=11)
-        folium.TileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr='Esri', name='Satellite').add_to(m)
-        folium.CircleMarker([lat, lon], radius=15, color="red" if risk_level >= 2 else "cyan", fill=True).add_to(m)
-        st_folium(m, height=500, use_container_width=True)
-
-# --- SIMULATION ---
-with tab_sim:
-    sc1, sc2 = st.columns([1, 2])
-    with sc1:
-        s_pres = st.slider("Simulate Low Pressure (hPa)", 880, 1030, 970)
-        s_risk = int(model_engine.predict([[lat, lon, s_pres]])[0])
-        st.metric("Predicted Severity", f"Level {s_risk}")
+        folium.TileLayer(tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr='Esri', name='Satellite').add_to(m)
         
-    with sc2:
-        st.write("Storm Intensity Forecast Graph")
-        st.progress(min(s_risk/3, 1.0))
+        # Color code markers by risk
+        marker_color = 'darkred' if risk_level >= 4 else 'red' if risk_level >= 2 else 'blue'
+        folium.Marker([lat, lon], icon=folium.Icon(color=marker_color, icon='warning', prefix='fa')).add_to(m)
+        
+        st_folium(m, height=500, use_container_width=True)
 
 # --- EMERGENCY OPS ---
 with tab_ops:
-    if risk_level >= 2 or (locals().get('s_risk', 0) >= 3):
-        play_voice_file(VOICE_MAP["🇮🇳 Emergency Alert (Telugu)"], autoplay=True)
-        st.markdown('<div class="emergency-banner">🚨 EMERGENCY ALERT: Activating Local Response.</div>', unsafe_allow_html=True)
-    else:
-        st.info("Emergency protocols are currently on standby.")
+    st.header("🚨 AI Voice Dispatch")
+    recipient = st.text_input("Target Number", placeholder="+91XXXXXXXXXX")
+    if st.button("📞 Start AI Voice Call", type="primary"):
+        make_ai_voice_call(recipient, VOICE_URLS[selected_voice])
+
+# --- SIMULATION (5-Level Testing) ---
+with tab_sim:
+    s_pres = st.slider("Simulate Extreme Pressure (hPa)", 880, 1030, 950)
+    s_risk = int(model_engine.predict([[lat, lon, s_pres]])[0])
+    
+    st.subheader(f"Simulated Status: Level {s_risk}")
+    st.progress(min(s_risk/5, 1.0)) # Scaled to Level 5
