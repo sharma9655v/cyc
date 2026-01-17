@@ -134,4 +134,4 @@ with tab_ops:
 # --- SIMULATION ---
 with tab_sim:
     s_pres = st.slider("Simulate Low Pressure (hPa)", 880, 1030, 1010)
-    st.metric("Predicted Severity", "High" if s_pres < 995 else "Normal")
+    st.metric("Predicted Severity", "High" if s_pres < 995 else "Normal")s
