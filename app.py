@@ -31,22 +31,16 @@ TWILIO_ACCOUNTS = {
     }
 }
 
-# Unified Voice Configuration: Local files for UI, URLs for Twilio
-VOICE_CONFIG = {
-    "📢 Regional Broadcast (English)": {
-        "url": "https://drive.google.com/uc?export=download&id=1CWswvjAoIAO7h6C6Jh-uCsrOWFM7dnS_",
-        "local": "alert_detailed.mp3"
-    },
-    "🇮🇳 Emergency Alert (Telugu)": {
-        "url": "https://drive.google.com/uc?export=download&id=15xz_g_TvMAF2Icjesi3FyMV6MMS-RZHt",
-        "local": "alert_telugu_final.mp3"
-    }
+# Twilio URLs remain for the remote AI voice call
+VOICE_URLS = {
+    "📢 Regional Broadcast (English)": "https://drive.google.com/uc?export=download&id=1CWswvjAoIAO7h6C6Jh-uCsrOWFM7dnS_",
+    "🇮🇳 Emergency Alert (Telugu)": "https://drive.google.com/uc?export=download&id=15xz_g_TvMAF2Icjesi3FyMV6MMS-RZHt"
 }
 
 st.set_page_config(page_title=CONFIG["APP_TITLE"], page_icon="🌪️", layout="wide")
 
 # ==============================================================================
-# MODULE 2: VOICE & CALL ENGINES
+# MODULE 2: TWILIO CALL ENGINE
 # ==============================================================================
 def make_ai_voice_call(to_number, audio_url, account_key="Primary"):
     """Triggers the remote AI voice call via Twilio."""
@@ -58,15 +52,6 @@ def make_ai_voice_call(to_number, audio_url, account_key="Primary"):
         return True, call.sid
     except Exception as e:
         return False, str(e)
-
-def play_local_audio(file_path):
-    """Plays the audio file locally in the Streamlit UI."""
-    if os.path.exists(file_path):
-        with open(file_path, "rb") as audio_file:
-            audio_bytes = audio_file.read()
-            st.audio(audio_bytes, format="audio/mp3")
-    else:
-        st.error(f"Audio file '{file_path}' not found.")
 
 # ==============================================================================
 # MODULE 3: DATA ENGINE
@@ -88,11 +73,9 @@ st.title(f"🌪️ {CONFIG['APP_TITLE']}")
 
 with st.sidebar:
     st.header("⚙️ Dispatch Settings")
-    selected_voice_label = st.selectbox("Select AI Voice Language", list(VOICE_CONFIG.keys()))
+    selected_voice_label = st.selectbox("Select AI Voice Language", list(VOICE_URLS.keys()))
     
-    st.write("**Local Preview:**")
-    play_local_audio(VOICE_CONFIG[selected_voice_label]["local"])
-    
+    # Audio players removed from here
     st.divider()
     account_choice = st.radio("Twilio Account", ["Primary", "Backup"])
 
@@ -108,14 +91,12 @@ with tab_live:
             st.error("🚨 ALERT: Cyclone risk detected.")
 
     with col2:
-        # Base Satellite Map
         m = folium.Map(location=[lat, lon], zoom_start=11)
         folium.TileLayer(
             tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
             attr='Esri', name='Satellite'
         ).add_to(m)
         
-        # Center Marker remains for reference
         folium.Marker(
             [lat, lon], 
             popup="Visakhapatnam Command Center",
@@ -128,19 +109,16 @@ with tab_live:
 with tab_ops:
     st.header("🚨 AI Voice Dispatch System")
     
-    c1, c2 = st.columns(2)
-    with c1:
-        recipient = st.text_input("Emergency Contact Number", placeholder="+91XXXXXXXXXX")
-    with c2:
-        st.write("**Listen to Selected Alert:**")
-        play_local_audio(VOICE_CONFIG[selected_voice_label]["local"])
+    # Audio players removed from here
+    recipient = st.text_input("Emergency Contact Number", placeholder="+91XXXXXXXXXX")
 
     if st.button("📞 Initiate AI Voice Call", type="primary"):
         if recipient:
             with st.spinner("Connecting to Twilio and playing AI Voice..."):
+                # System still uses the URL for the phone call
                 success, result = make_ai_voice_call(
                     recipient, 
-                    VOICE_CONFIG[selected_voice_label]["url"], 
+                    VOICE_URLS[selected_voice_label], 
                     account_choice
                 )
                 if success:
