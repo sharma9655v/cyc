@@ -26,13 +26,13 @@ TWILIO_ACCOUNTS = [
     {
         "name": "Primary",
         "sid": "ACc9b9941c778de30e2ed7ba57f87cdfbc",
-        "token": "c9ec654e3d157bf4dfe1233e9001d7b1",
+        "token": "b524116dc4b14af314a5919594df9121",
         "number": "+15075195618"
     },
     {
         "name": "Secondary",
         "sid": "ACa12e602647785572ebaf765659d26d23",
-        "token": "3cde0a560ccaf8c60321a1e8bea5bb82",
+        "token": "2e662c1d7a64289ba1c947ffa1f95f38",
         "number": "+14176076960"
     }
 ]
